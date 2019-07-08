@@ -1,0 +1,200 @@
+<html>
+
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+		<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+		<script src="FileSaver.js"></script>
+		<script type="text/javascript" src="http://echarts.baidu.com/gallery/vendors/jquery/jquery.js"></script>
+		<script type="text/javascript" src="http://api.map.baidu.com/api?v=2.0&ak=U1YCvtrqNiTGdD3p8quHqHKKGpVw2cxH"></script>
+		<style type="text/css">
+			body,
+			html {
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				font-family: "微软雅黑";
+			}
+			
+			#l-map {
+				height: 300px;
+				width: 100%;
+			}
+			
+			#r-result {
+				width: 100%;
+			}
+		</style>
+		<title>公交/地铁线路查询</title>
+	</head>
+
+	<body>
+		<input type="text" id="txt" disabled="disabled" />
+		<button id="btn">获取线路的GPS</button>
+		<div id="l-map"></div>
+		<div id="r-result"></div>
+	</body>
+
+</html>
+
+<script type="text/javascript">
+	// 百度地图API功能
+	var map = new BMap.Map("l-map"); // 创建Map实例
+	map.centerAndZoom(new BMap.Point(106.554578, 29.556169), 12); //以重庆市为中心
+
+	//以重庆市为中心进行搜索
+	var busline = new BMap.BusLineSearch('重庆市', { //参考JavaScript API v2.0类：http://lbsyun.baidu.com/cms/jsapi/reference/jsapi_reference.html#a7b37
+		renderOptions: {
+			map: map,
+			panel: "r-result"
+		},
+		onGetBusListComplete: function(result) { //result为BusListResult类型
+			if(result) {
+				var fstLine = result.getBusListItem(1); //获取第一个公交列表显示到map上，0表示上面板（正方向），1表示下面板（反方向）
+				busline.getBusLine(fstLine)
+			}
+		},
+		onGetBusLineComplete: function(rs) { //rs为BusLine类型
+			if(rs) { //可以考虑把数据存到数据库中
+				var buslineName = rs.name; //公交线路名称
+				var startTime = rs.startTime; //首班车时间
+				var endTime = rs.endTime; //末班车时间
+				var company = rs.company; //公交线路所属公司
+				var pathArray = rs.getPath(); //公交线路地理坐标数组，数组元素为百度API中的point对象
+				var lens = pathArray.length; //数组长度
+				var points = '';
+				for(var i = 0; i < lens; i++) {
+					points = points + pathArray[i].lng + ',' + pathArray[i].lat + ',';
+				}
+				points = points.substr(0, points.length - 1);
+				points = '[' + points + ']';
+				var busStationsNum = rs.getNumBusStations(); //线路中的公交站点数目
+				var busStationsName = ''; //公交站名称
+				var busStationsGPS = ''; //公交站的GPS坐标
+				for(var i = 0; i < busStationsNum; i++) {
+					busStationsName = busStationsName + '"' + rs.getBusStation(i).name + '"' + ',';
+					busStationsGPS = busStationsGPS + rs.getBusStation(i).position.lng + ',' +
+						rs.getBusStation(i).position.lat + ',';
+				}
+				busStationsName = busStationsName.substr(0, busStationsName.length - 1);
+				busStationsName = '[' + busStationsName + ']';
+				busStationsGPS = busStationsGPS.substr(0, busStationsGPS.length - 1);
+				busStationsGPS = '[' + busStationsGPS + ']';
+				//公交站信息：名称和GPS坐标
+				var busStations = '{"busStationsName":' + busStationsName + ',' +
+					'"busStationsGPS":' + busStationsGPS + '}';
+				//所有的公交线路信息
+				var buslineInfo = '[{"buslineName":' + '"' + buslineName + '"' + ',' +
+					'"startTime":' + '"' + startTime + '"' + ',' +
+					'"endTime":' + '"' + endTime + '"' + ',' +
+					'"company":' + '"' + company + '"' + ',' +
+					'"busStationsNum":' + busStationsNum + ',' +
+					'"busStations":' + busStations + ',' +
+					'"buslineGPS":' + points + '}]';
+				//保存所有的公交线路信息
+				var fileBuslineInfo = new File([buslineInfo], buslineName + '.json', {
+					type: "text/plain;charset=utf-8"
+				});
+				saveAs(fileBuslineInfo);
+			}
+		}
+	});
+
+	function busSearch(busNameKeyword) {
+		//getBusList函数在百度API开发文档中的说明：getBusList(keyword: String)，在用户配置的回调函数中返回公交列表结果，其类型为BusListResult
+		//所以，getBusList的参数为字符串类型。即busNameKeyword为字符串。
+		busline.getBusList(busNameKeyword);
+	}
+
+	var busData = null;
+	$.ajax({
+		type: 'get',
+		url: 'data.json', //data.json是由python写的网络爬虫程序从网站“https://chongqing.8684.cn/line2”上抓取的
+		async: false,
+		success: function(data) {
+			busData = data;
+		},
+		error: function(e) {
+			alert('获取data.json失败');
+		}
+	});
+	var n = busData.length;
+	var arr = [];
+	for(var i = 0; i < n; i++) {
+		arr.push(parseInt(busData[i].busName));
+	}
+
+	function removeMultiNum(arr) { //去重函数
+		var hash = [];
+		for(var i = 0; i < arr.length; i++) {
+			if(hash.indexOf(arr[i]) == -1) {
+				hash.push(arr[i]);
+			}
+		}
+		return hash;
+	}
+	busData = removeMultiNum(arr); //去掉重复的后，共有527条线路
+
+	//将公交车号码转为具体的线路名称（字符串），方便busline.getBusList(busNameKeyword)函数调用。顺便保存为txt文本
+	function changeToBuslineNameStr(busData) {
+		var buslineNameStr = '';
+		for(var i = 0; i < busData.length; i++) {
+			buslineNameStr = buslineNameStr + '重庆' + busData[i] + '路公交车路线' + ',';
+		}
+		buslineNameStr = buslineNameStr.substr(0, buslineNameStr.length - 1); //去掉最后的','字符
+		buslineNameStr = '[' + buslineNameStr + ']';
+		var file = new File([buslineNameStr], 'busline-name-chongqing.json', {
+			type: "text/plain;charset=utf-8"
+		});
+		saveAs(file);
+	}
+	//changeToBuslineNameStr(busData);
+
+	//将Enter键绑定到按钮的点击事件上
+	document.onkeyup = function(event) {
+		var e = event || window.event;
+		var keyCode = e.keyCode || e.which;
+		if(keyCode == 13) {
+			$("#btn").click();
+		}
+	}
+	var busline_no = 0; //当前的线路索引
+	var btn = document.getElementById("btn");
+	var txt = document.getElementById("txt");
+	btn.addEventListener('click', function() {
+		//注意：busSearch(100)得到的是：100路(丁香路-梨花大道)，
+		//而busSearch('重庆' + 100 + '路公交车路线')得到的是：100路(梨花大道-丁香路)，
+		//公交线路名称仍然是一样的，但方向不同，这也意味着路径的GPS数据不同，路径中的GPS点个数也可能不同。
+		busSearch('重庆' + busData[busline_no] + '路公交车路线');
+		busline_no += 1;
+		txt.value = busline_no;
+	});
+	
+	//第一次获取公交线路，但很有可能会遗漏一些线路，所以需要进行第二次、第三次甚至更多次数的获取操作
+//	for(var i = 0; i < busData.length; i++) {
+//		busSearch('重庆' + busData[i] + '路公交车路线');
+//	}
+
+	var buslines_captured = null; //已经抓取到的线路编号（buslines_captured.json文件可由python获得）
+	$.ajax({
+		type: 'get',
+		url: 'buslines_captured.json',
+		async: false,
+		success: function(data) {
+			buslines_captured = data;
+		},
+		error: function(e) {
+			alert('获取buslines_captured.json失败');
+		}
+	});
+	//和busData对比，并返回两者的差集运算结果（注：250、436、547、635、887这5条线路是用代码搜索不到的）
+	var buslines_remained = [];
+	for (var i=0; i<busData.length; i++) {
+		if (buslines_captured.indexOf(busData[i].toString()) == -1) {
+			buslines_remained.push(busData[i]);
+		}
+	}
+	//第二次获取公交线路
+	for(var i = 0; i < buslines_remained.length; i++) {
+		busSearch('重庆' + buslines_remained[i] + '路公交车路线');
+	}
+</script>
